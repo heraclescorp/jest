@@ -21,6 +21,7 @@ import {
   PARENT_MESSAGE_SETUP_ERROR,
   ParentMessageMemUsage,
 } from '../types';
+import {withoutCircularRefs} from './withoutCircularRefs';
 
 type UnknownFunction = (...args: Array<unknown>) => unknown | Promise<unknown>;
 
@@ -96,8 +97,18 @@ function reportSuccess(result: unknown) {
   if (!process || !process.send) {
     throw new Error('Child can only be used on a forked process');
   }
-
-  process.send([PARENT_MESSAGE_OK, result]);
+  try {
+    process.send([PARENT_MESSAGE_OK, result]);
+  } catch (error) {
+    // We can safely send a message to the parent process again
+    // because previous sending was halted by "TypeError: Converting circular structure to JSON".
+    // But this time the message will be cleared from circular references.
+    if (error instanceof Error && /circular structure/.test(error?.message)) {
+      process.send([PARENT_MESSAGE_OK, withoutCircularRefs(result)]);
+    } else {
+      throw error;
+    }
+  }
 }
 
 function reportClientError(error: Error) {

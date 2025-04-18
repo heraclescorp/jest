@@ -7,6 +7,7 @@
 
 import {isMainThread, parentPort} from 'worker_threads';
 import {PARENT_MESSAGE_CUSTOM} from '../types';
+import {withoutCircularRefs} from './withoutCircularRefs';
 
 export default function messageParent(
   message: unknown,
@@ -15,7 +16,21 @@ export default function messageParent(
   if (!isMainThread && parentPort != null) {
     parentPort.postMessage([PARENT_MESSAGE_CUSTOM, message]);
   } else if (typeof parentProcess.send === 'function') {
-    parentProcess.send([PARENT_MESSAGE_CUSTOM, message]);
+    try {
+      parentProcess.send([PARENT_MESSAGE_CUSTOM, message]);
+    } catch (error) {
+      if (error instanceof Error && /circular structure/.test(error?.message)) {
+        // We can safely send a message to the parent process again
+        // because previous sending was halted by "TypeError: Converting circular structure to JSON".
+        // But this time the message will be cleared from circular references.
+        parentProcess.send([
+          PARENT_MESSAGE_CUSTOM,
+          withoutCircularRefs(message),
+        ]);
+      } else {
+        throw error;
+      }
+    }
   } else {
     throw new Error('"messageParent" can only be used inside a worker');
   }
